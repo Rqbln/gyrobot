@@ -1,6 +1,6 @@
 #include "Wire.h"
-#include <Arduino.h>
 #include <Servo.h>
+#include <Arduino.h>
 
 // Adresse I2C du MPU6050
 const int MPU_addr = 0x68;
@@ -13,16 +13,13 @@ Servo servoLeft;  // Servomoteur gauche
 Servo servoRight; // Servomoteur droit
 
 // Paramètres du contrôleur PID
-double setPoint = 87.0; // Angle cible de tangage
-double kp = 1;          // Coefficient proportionnel
-double ki = 0;          // Coefficient intégral
-double kd = 0;          // Coefficient dérivé
+double setPoint = 90.0; // Angle cible de tangage à 90 degrés
+double kp = 1.05;        // Coefficient proportionnel
+double ki = 0;       // Coefficient intégral
+double kd = 0;       // Coefficient dérivé
 
 double error, integral = 0, derivative, lastError = 0;
 double output;
-
-// Variable pour basculer entre marche et arrêt
-bool motorsRunning = true;
 
 void setup() {
     Wire.begin(); // Commence la communication I2C
@@ -38,58 +35,48 @@ void setup() {
 }
 
 void loop() {
-    // Vérifie si une entrée série est disponible
-    if (Serial.available() > 0) {
-        char receivedChar = Serial.read();
-        if (receivedChar == 'P' || receivedChar == 'p') {
-            // Inverse l'état des servomoteurs (toggle)
-            motorsRunning = !motorsRunning;
-            Serial.print("Motors ");
-            Serial.println(motorsRunning ? "ON" : "OFF");
-        }
+    Wire.beginTransmission(MPU_addr);
+    Wire.write(0x3B); // Demande les données à partir du registre 0x3B
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_addr, 14, true); // Lit 14 octets de données
+
+    AcX = Wire.read() << 8 | Wire.read();
+    AcY = Wire.read() << 8 | Wire.read();
+    AcZ = Wire.read() << 8 | Wire.read();
+
+    // Calcule l'angle de tangage à partir des accéléromètres
+    angleX = atan2(AcY, AcZ) * 180.0 / PI;
+
+    // Calcul du PID
+    error = setPoint - angleX;
+    integral += error * 0.001;
+    derivative = (error - lastError) / 0.001;
+    output = kp * error + ki * integral + kd * derivative;
+    lastError = error;
+
+    // Ajustements conditionnels basés sur la valeur de l'angle
+    double adjustFactor = 1.0;
+    if (angleX > 90) {
+        adjustFactor = 1.2; // Augmenter la sensibilité du servo droit quand > 90
+    } else if (angleX < 90) {
+        adjustFactor = 0.8; // Diminuer la sensibilité du servo gauche quand < 90
     }
 
-    // Si les moteurs sont en marche, exécuter le PID et contrôler les servos
-    if (motorsRunning) {
-        Wire.beginTransmission(MPU_addr);
-        Wire.write(0x3B); // Demande les données à partir du registre 0x3B
-        Wire.endTransmission(false);
-        Wire.requestFrom(MPU_addr, 14, true); // Lit 14 octets de données
+    // Commande PID ajustée pour les servomoteurs avec ajustement conditionnel
+    int commandLeft = 90 + output * (angleX < 90 ? adjustFactor : 1.0);
+    int commandRight = 90 - output * (angleX > 90 ? adjustFactor : 1.0);
 
-        AcX = Wire.read() << 8 | Wire.read();
-        AcY = Wire.read() << 8 | Wire.read();
-        AcZ = Wire.read() << 8 | Wire.read();
+    // Ajuste les commandes pour rester dans les limites des servomoteurs
+    commandLeft = constrain(commandLeft, 0, 180);
+    commandRight = constrain(commandRight, 0, 180);
 
-        // Calcule l'angle de tangage à partir des accéléromètres
-        angleX = atan2(AcY, AcZ) * 180.0 / PI;
+    servoLeft.write(commandLeft);
+    servoRight.write(commandRight);
 
-        // Calcul du PID
-        error = setPoint - angleX;
-        integral += error * 0.001;
-        derivative = (error - lastError) / 0.001;
-        output = kp * error + ki * integral + kd * derivative;
-        lastError = error;
+    // Affichage des informations pour le débogage
+    Serial.print("Angle X: "); Serial.println(angleX);
+    Serial.print("Command Left: "); Serial.print(commandLeft);
+    Serial.print(" Command Right: "); Serial.println(commandRight);
 
-        // Commande PID ajustée pour les servomoteurs
-        int commandLeft = 90 + output;  // Commande ajustée pour le servo gauche
-        int commandRight = 90 - output; // Commande ajustée pour le servo droit
-
-        // Ajuste les commandes pour rester dans les limites des servomoteurs
-        commandLeft = constrain(commandLeft, 0, 180);
-        commandRight = constrain(commandRight, 0, 180);
-
-        servoLeft.write(commandLeft);
-        servoRight.write(commandRight); // Maintenant correctement inversé pour l'orientation
-
-        // Affichage des informations pour le débogage
-        Serial.print("Angle X: "); Serial.println(angleX);
-        Serial.print("Command Left: "); Serial.print(commandLeft);
-        Serial.print(" Command Right: "); Serial.println(commandRight);
-    } else {
-        // Arrêter les servos en position neutre (90 degrés)
-        servoLeft.write(90);
-        servoRight.write(90);
-    }
-
-    delay(10); // Délai pour éviter un rafraîchissement trop rapide
+    delay(1); // Délai pour la boucle de contrôle
 }
