@@ -12,18 +12,30 @@ Servo servoLeft;
 Servo servoRight;
 
 // PID parameters for Pitch
-double kpPitch = 2, kiPitch =1 , kdPitch =0.01 ;
+double kpPitch = 0.5, kiPitch = 5, kdPitch = 0.1;
 double inputPitch, outputPitch, setPointPitch = 90.0;
 double lastErrorPitch = 0;
+double integralPitch = 0;
+double lastInputPitch = 0;
 
 // PID parameters for Roll
 double kpRoll = 0, kiRoll = 0, kdRoll = 0;
 double inputRoll, outputRoll, setPointRoll = 0.0;
 double lastErrorRoll = 0;
+double integralRoll = 0;
+double lastInputRoll = 0;
 
 // Timing
 unsigned long currentTime, previousTime;
-double sampleTime = 23; // Sample time in milliseconds
+double sampleTime = 10; // Sample time in milliseconds
+
+// Low-pass filter constants
+double tau = 0.05; // Time constant for low-pass filter
+double alpha = tau / (tau + sampleTime / 1000.0);
+
+// Low-pass filtered derivative terms
+double filteredDPitch = 0;
+double filteredDRoll = 0;
 
 void setup() {
     Wire.begin();
@@ -46,19 +58,44 @@ void loop() {
         // Calculate Pitch angle from accelerometer data
         inputPitch = atan2(ay, az) * 180.0 / PI;
         double pitchError = setPointPitch - inputPitch;
-        outputPitch = kpPitch * pitchError + kiPitch * pitchError * (sampleTime / 1000) + kdPitch * (pitchError - lastErrorPitch) / (sampleTime / 1000);
-        lastErrorPitch = pitchError;
+
+        // Proportional term
+        double pTermPitch = kpPitch * pitchError;
+
+        // Integral term with anti-windup
+        integralPitch += kiPitch * pitchError * (sampleTime / 1000.0);
+        integralPitch = constrain(integralPitch, -100, 100); // Clamp integral term
+
+        // Derivative term with low-pass filter
+        double dTermPitch = kdPitch * (inputPitch - lastInputPitch) / (sampleTime / 1000.0);
+        filteredDPitch = alpha * dTermPitch + (1 - alpha) * filteredDPitch;
+
+        // PID output for Pitch
+        outputPitch = pTermPitch + integralPitch - filteredDPitch;
+        lastInputPitch = inputPitch;
 
         // Calculate Roll angle from gyroscope data
         inputRoll = gx / 131.0; // Convert gyro data to degrees/s
         double rollError = setPointRoll - inputRoll;
-        outputRoll = kpRoll * rollError + kiRoll * rollError * (sampleTime / 1000) + kdRoll * (rollError - lastErrorRoll) / (sampleTime / 1000);
-        lastErrorRoll = rollError;
+
+        // Proportional term
+        double pTermRoll = kpRoll * rollError;
+
+        // Integral term with anti-windup
+        integralRoll += kiRoll * rollError * (sampleTime / 1000.0);
+        integralRoll = constrain(integralRoll, -100, 100); // Clamp integral term
+
+        // Derivative term with low-pass filter
+        double dTermRoll = kdRoll * (inputRoll - lastInputRoll) / (sampleTime / 1000.0);
+        filteredDRoll = alpha * dTermRoll + (1 - alpha) * filteredDRoll;
+
+        // PID output for Roll
+        outputRoll = pTermRoll + integralRoll - filteredDRoll;
+        lastInputRoll = inputRoll;
 
         // Combine outputs to control servos
         int commandLeft = 90 - outputPitch - outputRoll;
         int commandRight = 90 + outputPitch + outputRoll;
-
 
         servoLeft.write(constrain(commandLeft, 0, 180));
         servoRight.write(constrain(commandRight, 0, 180));
