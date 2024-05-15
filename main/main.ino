@@ -12,38 +12,30 @@ Servo servoLeft;
 Servo servoRight;
 
 // PID parameters for Pitch
-double kpPitch = 0.8, kiPitch = 10, kdPitch = 0.0005;
-double inputPitch, outputPitch, setPointPitch = 90.0;
+double kpPitch = 0.8, kiPitch = 4, kdPitch = 0.0005;
+double inputPitch, outputPitch, setPointPitch = 91.0;
 double lastErrorPitch = 0;
 double integralPitch = 0;
 double lastInputPitch = 0;
-
-// PID parameters for Roll
-double kpRoll = 0, kiRoll = 0, kdRoll = 0;
-double inputRoll, outputRoll, setPointRoll = 0.0;
-double lastErrorRoll = 0;
-double integralRoll = 0;
-double lastInputRoll = 0;
 
 // Timing
 unsigned long currentTime, previousTime;
 double sampleTime = 10; // Sample time in milliseconds
 
 // Low-pass filter constants
-double tau = 0.5; // Time constant for low-pass filter
+double tau = 0.05; // Time constant for low-pass filter
 double alpha = tau / (tau + sampleTime / 1000.0);
 
-// Low-pass filtered derivative terms
+// Low-pass filtered derivative term
 double filteredDPitch = 0;
-double filteredDRoll = 0;
 
 void setup() {
     Wire.begin();
     Serial.begin(9600);
     mpu.initialize();
 
-    servoLeft.attach(11);
-    servoRight.attach(10);
+    servoLeft.attach(10);
+    servoRight.attach(11);
 
     previousTime = millis();
 }
@@ -58,14 +50,14 @@ void loop() {
         // Calculate Pitch angle from accelerometer data
         inputPitch = atan2(ay, az) * 180.0 / PI;
         double pitchError = setPointPitch - inputPitch;
-        
+
         // Proportional term
         double pTermPitch = kpPitch * pitchError;
-        
+
         // Integral term with anti-windup
         integralPitch += kiPitch * pitchError * (sampleTime / 1000.0);
         integralPitch = constrain(integralPitch, -100, 100); // Clamp integral term
-        
+
         // Derivative term with low-pass filter
         double dTermPitch = kdPitch * (inputPitch - lastInputPitch) / (sampleTime / 1000.0);
         filteredDPitch = alpha * dTermPitch + (1 - alpha) * filteredDPitch;
@@ -74,35 +66,31 @@ void loop() {
         outputPitch = pTermPitch + integralPitch - filteredDPitch;
         lastInputPitch = inputPitch;
 
-        // Calculate Roll angle from gyroscope data
-        inputRoll = gx / 131.0; // Convert gyro data to degrees/s
-        double rollError = setPointRoll - inputRoll;
-        
-        // Proportional term
-        double pTermRoll = kpRoll * rollError;
-        
-        // Integral term with anti-windup
-        integralRoll += kiRoll * rollError * (sampleTime / 1000.0);
-        integralRoll = constrain(integralRoll, -100, 100); // Clamp integral term
-        
-        // Derivative term with low-pass filter
-        double dTermRoll = kdRoll * (inputRoll - lastInputRoll) / (sampleTime / 1000.0);
-        filteredDRoll = alpha * dTermRoll + (1 - alpha) * filteredDRoll;
+        // Scale outputPitch to determine servo power (0-180 range)
+        int servoPower = map(abs(outputPitch), 0, 180, 0, 90);
 
-        // PID output for Roll
-        outputRoll = pTermRoll + integralRoll - filteredDRoll;
-        lastInputRoll = inputRoll;
+        // Reduce correction variablely as the gyropode approaches setPointPitch for angles > setPointPitch
+        double correctionFactor = 1.0;
+        if (inputPitch > setPointPitch) {
+            if (abs(pitchError) < 10) {
+                correctionFactor = 0.5 + 0.05 * abs(pitchError); // Adjust this function as needed
+            } else if (abs(pitchError) < 20) {
+                correctionFactor = 0.75 + 0.0125 * abs(pitchError);
+            }
+            servoPower = servoPower * correctionFactor;
+        }
 
-        // Combine outputs to control servos
-        int commandLeft = 90 - outputPitch - outputRoll;
-        int commandRight = 90 + outputPitch + outputRoll;
+        // Adjust servo commands based on the scaled power
+        int commandLeft = setPointPitch - (outputPitch >= 0 ? servoPower : -servoPower);
+        int commandRight = setPointPitch + (outputPitch >= 0 ? servoPower : -servoPower);
 
+        // Write commands to servos
         servoLeft.write(constrain(commandLeft, 0, 180));
         servoRight.write(constrain(commandRight, 0, 180));
 
         // Debugging output
         Serial.print("Pitch: "); Serial.println(inputPitch);
-        Serial.print("Roll: "); Serial.println(inputRoll);
+        Serial.print("Pitch Error: "); Serial.println(pitchError);
         Serial.print("Left Command: "); Serial.println(commandLeft);
         Serial.print("Right Command: "); Serial.println(commandRight);
 
