@@ -37,7 +37,7 @@ Le projet Gyrobot vise à développer un gyropode auto-équilibrant à deux roue
 
 1. Cloner le dépôt Git :
    ```
-   git clone [URL_DU_REPO]
+   git clone https://github.com/Rqbln/gyrobot
    ```
 2. Ouvrir le projet avec PlatformIO.
 3. Connecter l'Arduino Nano via USB.
